@@ -82,10 +82,12 @@ export default async function handler(
     });
 
     // Update index
-    let index: { id: string; name: string; url: string; filename: string; uploadedAt: string; uploadedBy: string }[] = [];
-    try {
-      const indexRes = await fetch(`https://${process.env.BLOB_STORE_HOSTNAME}/republic/index.json`);
-      if (indexRes.ok) index = await indexRes.json();
+    let index: { id: string; name: string; url: string; filename: string; uploadedAt: string; uploadedBy: string }[] = [];try {
+      const { blobs } = await list({ prefix: "republic/index.json" });
+      if (blobs && blobs.length > 0) {
+        const indexRes = await fetch(blobs[0].url);
+        if (indexRes.ok) index = await indexRes.json();
+      }
     } catch {}
 
     index.push({
