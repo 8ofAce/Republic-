@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
+import { list } from "@vercel/blob";
 
 export default async function handler(
   req: NextApiRequest,
@@ -7,22 +8,23 @@ export default async function handler(
   if (req.method !== "GET") return res.status(405).end();
 
   try {
-    if (!process.env.BLOB_STORE_HOSTNAME) {
+    const { blobs } = await list({ prefix: "republic/index.json" });
+    
+    if (!blobs || blobs.length === 0) {
       return res.status(200).json([]);
     }
 
-    const response = await fetch(
-      `https://${process.env.BLOB_STORE_HOSTNAME}/republic/index.json`,
-      { next: { revalidate: 0 } } as RequestInit
-    );
-
+    const indexBlob = blobs[0];
+    const response = await fetch(indexBlob.url);
+    
     if (!response.ok) {
       return res.status(200).json([]);
     }
 
     const data = await response.json();
     return res.status(200).json(data);
-  } catch {
+  } catch (e) {
+    console.error(e);
     return res.status(200).json([]);
   }
 }
