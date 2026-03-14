@@ -1,7 +1,9 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import bcrypt from "bcryptjs";
-import { ADMINS } from "../../lib/admins";
 import { signToken } from "../../lib/auth";
+
+const ADMINS = [
+  { username: "admin", password: "republic2024" },
+];
 
 export default async function handler(
   req: NextApiRequest,
@@ -16,15 +18,12 @@ export default async function handler(
   }
 
   const admin = ADMINS.find(
-    (a) => a.username.toLowerCase() === username.toLowerCase()
+    (a) =>
+      a.username.toLowerCase() === username.toLowerCase() &&
+      a.password === password
   );
 
   if (!admin) {
-    return res.status(401).json({ error: "Invalid credentials" });
-  }
-
-  const valid = await bcrypt.compare(password, admin.passwordHash);
-  if (!valid) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
 
