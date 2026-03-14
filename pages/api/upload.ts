@@ -1,8 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { put } from "@vercel/blob";
 import { verifyToken } from "../../lib/auth";
-import formidable, { File } from "formidable";
-import fs from "fs";
 
 export const config = {
   api: { bodyParser: false },
@@ -12,6 +10,51 @@ function getToken(req: NextApiRequest): string | null {
   const auth = req.headers.authorization;
   if (auth && auth.startsWith("Bearer ")) return auth.slice(7);
   return null;
+}
+
+async function parseMultipart(req: NextApiRequest): Promise<{ name: string; fileBuffer: Buffer; filename: string; mimetype: string } | null> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      try {
+        const body = Buffer.concat(chunks);
+        const contentType = req.headers["content-type"] || "";
+        const boundary = contentType.split("boundary=")[1];
+        if (!boundary) return resolve(null);
+
+        const parts = body.toString("binary").split(`--${boundary}`);
+        let name = "";
+        let fileBuffer: Buffer | null = null;
+        let filename = "upload";
+        let mimetype = "application/octet-stream";
+
+        for (const part of parts) {
+          if (part.includes('name="name"')) {
+            const match = part.split("\r\n\r\n");
+            if (match[1]) name = match[1].replace(/\r\n--$/, "").trim();
+          }
+          if (part.includes('name="file"')) {
+            const filenameMatch = part.match(/filename="([^"]+)"/);
+            if (filenameMatch) filename = filenameMatch[1];
+            const mimeMatch = part.match(/Content-Type: ([^\r\n]+)/);
+            if (mimeMatch) mimetype = mimeMatch[1].trim();
+            const headerEnd = part.indexOf("\r\n\r\n");
+            if (headerEnd !== -1) {
+              const fileData = part.slice(headerEnd + 4).replace(/\r\n--$/, "");
+              fileBuffer = Buffer.from(fileData, "binary");
+            }
+          }
+        }
+
+        if (!name || !fileBuffer) return resolve(null);
+        resolve({ name, fileBuffer, filename, mimetype });
+      } catch (e) {
+        reject(e);
+      }
+    });
+    req.on("error", reject);
+  });
 }
 
 export default async function handler(
@@ -26,61 +69,43 @@ export default async function handler(
   const user = await verifyToken(token);
   if (!user) return res.status(401).json({ error: "Invalid token" });
 
-  const form = formidable({ maxFileSize: 50 * 1024 * 1024 }); // 50MB
+  try {
+    const parsed = await parseMultipart(req);
+    if (!parsed) return res.status(400).json({ error: "Missing name or file" });
 
-  form.parse(req, async (err, fields, files) => {
-    if (err) return res.status(400).json({ error: "Upload failed" });
+    const { name, fileBuffer, filename, mimetype } = parsed;
 
-    const name = Array.isArray(fields.name) ? fields.name[0] : fields.name;
-    const file = Array.isArray(files.file) ? files.file[0] : files.file;
+    const blob = await put(`republic/${Date.now()}-${filename}`, fileBuffer, {
+      access: "public",
+      contentType: mimetype,
+      addRandomSuffix: false,
+    });
 
-    if (!name || !file) {
-      return res.status(400).json({ error: "Missing name or file" });
-    }
-
+    // Update index
+    let index: { id: string; name: string; url: string; filename: string; uploadedAt: string; uploadedBy: string }[] = [];
     try {
-      const fileBuffer = fs.readFileSync((file as File).filepath);
-      const filename = (file as File).originalFilename || "upload";
+      const indexRes = await fetch(`https://${process.env.BLOB_STORE_HOSTNAME}/republic/index.json`);
+      if (indexRes.ok) index = await indexRes.json();
+    } catch {}
 
-      const blob = await put(`republic/${Date.now()}-${filename}`, fileBuffer, {
-        access: "public",
-        contentType: (file as File).mimetype || "application/octet-stream",
-      });
+    index.push({
+      id: Date.now().toString(),
+      name,
+      url: blob.url,
+      filename,
+      uploadedAt: new Date().toISOString(),
+      uploadedBy: user.username,
+    });
 
-      // Store metadata in Vercel Blob as a JSON index file
-      // We fetch existing index, append, and re-upload
-      let index: { id: string; name: string; url: string; filename: string; uploadedAt: string; uploadedBy: string }[] = [];
+    await put("republic/index.json", JSON.stringify(index), {
+      access: "public",
+      contentType: "application/json",
+      addRandomSuffix: false,
+    });
 
-      try {
-        const indexBlob = await fetch(
-          `https://${process.env.BLOB_STORE_HOSTNAME}/republic/index.json`
-        );
-        if (indexBlob.ok) {
-          index = await indexBlob.json();
-        }
-      } catch {
-        // index doesn't exist yet
-      }
-
-      index.push({
-        id: Date.now().toString(),
-        name: name as string,
-        url: blob.url,
-        filename,
-        uploadedAt: new Date().toISOString(),
-        uploadedBy: user.username,
-      });
-
-      await put("republic/index.json", JSON.stringify(index), {
-        access: "public",
-        contentType: "application/json",
-        addRandomSuffix: false,
-      });
-
-      return res.status(200).json({ success: true });
-    } catch (e) {
-      console.error(e);
-      return res.status(500).json({ error: "Storage error" });
-    }
-  });
+    return res.status(200).json({ success: true });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: "Storage error" });
+  }
 }
