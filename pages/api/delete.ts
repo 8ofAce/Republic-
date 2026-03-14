@@ -38,7 +38,7 @@ export default async function handler(
     await put("republic/index.json", JSON.stringify(index), {
       access: "public",
       contentType: "application/json",
-      allowOverwrite: true,
+      addRandomSuffix: false,
     });
 
     // Delete actual blob
