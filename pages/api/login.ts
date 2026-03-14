@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { signToken } from "../../lib/auth";
 
 const ADMINS = [
-  { username: "admin", password: "republic2024" },
+  { username: "comrade.", password: "longlivetheussr" },
 ];
 
 export default async function handler(
