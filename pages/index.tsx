@@ -223,7 +223,7 @@ export default function Home() {
           {tab === "files" && (
             <div className="tab-content">
               <div className="tab-header">
-                <h1 className="tab-title">Archive</h1>
+                <h1 className="tab-title">Files</h1>
                 <p className="tab-subtitle">Files published by the Republic</p>
               </div>
 
