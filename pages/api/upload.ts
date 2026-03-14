@@ -1,5 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from "next";
-import { put } from "@vercel/blob";
+import { put, list } from "@vercel/blob";
 import { verifyToken } from "../../lib/auth";
 
 export const config = {
