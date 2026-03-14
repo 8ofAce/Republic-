@@ -3,7 +3,10 @@ import { put, list } from "@vercel/blob";
 import { verifyToken } from "../../lib/auth";
 
 export const config = {
-  api: { bodyParser: false },
+  api: {
+    bodyParser: false,
+    responseLimit: false,
+  },
 };
 
 function getToken(req: NextApiRequest): string | null {
