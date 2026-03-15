@@ -3,19 +3,17 @@ import { JWT_SECRET } from "./admins";
 
 const secret = new TextEncoder().encode(JWT_SECRET);
 
-export async function signToken(username: string): Promise<string> {
-  return new SignJWT({ username })
+export async function signToken(username: string, role: string): Promise<string> {
+  return new SignJWT({ username, role })
     .setProtectedHeader({ alg: "HS256" })
     .setExpirationTime("8h")
     .sign(secret);
 }
 
-export async function verifyToken(
-  token: string
-): Promise<{ username: string } | null> {
+export async function verifyToken(token: string): Promise<{ username: string; role: string } | null> {
   try {
     const { payload } = await jwtVerify(token, secret);
-    return { username: payload.username as string };
+    return { username: payload.username as string, role: payload.role as string };
   } catch {
     return null;
   }
