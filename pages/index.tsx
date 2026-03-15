@@ -108,7 +108,11 @@ export default function Home() {
     } catch { setUsers([]); }
   };
 
-  useEffect(() => { fetchFiles(); fetchDevs(); }, []);
+  useEffect(() => {
+  const t = localStorage.getItem("republic_token");
+  fetchFiles(t);
+  fetchDevs();
+}, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
