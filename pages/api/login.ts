@@ -3,7 +3,7 @@ import { signToken } from "../../lib/auth";
 import { list, put } from "@vercel/blob";
 
 const ADMINS = [
-  { username: "admin", password: "republic2024" },
+  { username: "admin", password: "republic2026" },
 ];
 
 type User = {
