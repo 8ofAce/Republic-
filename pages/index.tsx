@@ -6,6 +6,7 @@ type FileEntry = {
   name: string;
   url: string;
   filename: string;
+  access: string;
   uploadedAt: string;
   uploadedBy: string;
 };
@@ -18,15 +19,25 @@ type Dev = {
   addedAt: string;
 };
 
+type UserAccount = {
+  id: string;
+  username: string;
+  access: "basic" | "premium";
+  createdAt: string;
+};
+
 export default function Home() {
   const [tab, setTab] = useState<"files" | "devs" | "login" | "admin">("files");
   const [files, setFiles] = useState<FileEntry[]>([]);
   const [filesLoading, setFilesLoading] = useState(true);
+  const [filesLocked, setFilesLocked] = useState(false);
   const [devs, setDevs] = useState<Dev[]>([]);
   const [devsLoading, setDevsLoading] = useState(true);
+  const [users, setUsers] = useState<UserAccount[]>([]);
 
   const [token, setToken] = useState<string | null>(null);
-  const [adminUser, setAdminUser] = useState<string | null>(null);
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [loggedInUser, setLoggedInUser] = useState<string | null>(null);
   const [loginUsername, setLoginUsername] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -36,6 +47,7 @@ export default function Home() {
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploadType, setUploadType] = useState<"file" | "link">("file");
   const [uploadLink, setUploadLink] = useState("");
+  const [uploadAccess, setUploadAccess] = useState<"basic" | "premium" | "both">("both");
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState("");
   const [uploadSuccess, setUploadSuccess] = useState(false);
@@ -50,18 +62,30 @@ export default function Home() {
   const devImageRef = useRef<HTMLInputElement>(null);
   const [devImagePreview, setDevImagePreview] = useState<string | null>(null);
 
+  const [newUsername, setNewUsername] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newAccess, setNewAccess] = useState<"basic" | "premium">("basic");
+  const [userSaving, setUserSaving] = useState(false);
+  const [userError, setUserError] = useState("");
+  const [userSuccess, setUserSuccess] = useState(false);
+
   useEffect(() => {
     const t = localStorage.getItem("republic_token");
     const u = localStorage.getItem("republic_user");
-    if (t && u) { setToken(t); setAdminUser(u); }
+    const r = localStorage.getItem("republic_role");
+    if (t && u && r) { setToken(t); setLoggedInUser(u); setUserRole(r); }
   }, []);
 
-  const fetchFiles = async () => {
+  const fetchFiles = async (t?: string) => {
     setFilesLoading(true);
     try {
-      const res = await fetch("/api/files");
+      const useToken = t || token;
+      const headers: Record<string, string> = {};
+      if (useToken) headers["Authorization"] = `Bearer ${useToken}`;
+      const res = await fetch("/api/files", { headers });
       const data = await res.json();
-      setFiles(Array.isArray(data) ? data.reverse() : []);
+      if (data.locked) { setFilesLocked(true); setFiles([]); }
+      else { setFilesLocked(false); setFiles(Array.isArray(data.files) ? data.files.reverse() : []); }
     } catch { setFiles([]); }
     setFilesLoading(false);
   };
@@ -74,6 +98,14 @@ export default function Home() {
       setDevs(Array.isArray(data) ? data : []);
     } catch { setDevs([]); }
     setDevsLoading(false);
+  };
+
+  const fetchUsers = async (t: string) => {
+    try {
+      const res = await fetch("/api/manageusers", { headers: { Authorization: `Bearer ${t}` } });
+      const data = await res.json();
+      setUsers(Array.isArray(data) ? data : []);
+    } catch { setUsers([]); }
   };
 
   useEffect(() => { fetchFiles(); fetchDevs(); }, []);
@@ -93,10 +125,18 @@ export default function Home() {
         setLoginError(data.error || "Invalid credentials");
       } else {
         setToken(data.token);
-        setAdminUser(data.username);
+        setLoggedInUser(data.username);
+        setUserRole(data.role);
         localStorage.setItem("republic_token", data.token);
         localStorage.setItem("republic_user", data.username);
-        setTab("admin");
+        localStorage.setItem("republic_role", data.role);
+        if (data.role === "admin") {
+          setTab("admin");
+          fetchUsers(data.token);
+        } else {
+          setTab("files");
+          fetchFiles(data.token);
+        }
         setLoginUsername("");
         setLoginPassword("");
       }
@@ -105,11 +145,12 @@ export default function Home() {
   };
 
   const handleLogout = () => {
-    setToken(null);
-    setAdminUser(null);
+    setToken(null); setLoggedInUser(null); setUserRole(null);
     localStorage.removeItem("republic_token");
     localStorage.removeItem("republic_user");
+    localStorage.removeItem("republic_role");
     setTab("files");
+    fetchFiles("");
   };
 
   const handleUpload = async (e: React.FormEvent) => {
@@ -118,28 +159,26 @@ export default function Home() {
     if (uploadType === "file" && !uploadFile) { setUploadError("Please select a file."); return; }
     if (uploadType === "link" && !uploadLink.trim()) { setUploadError("Please enter a URL."); return; }
 
-    setUploading(true);
-    setUploadError("");
-    setUploadSuccess(false);
+    setUploading(true); setUploadError(""); setUploadSuccess(false);
 
     if (uploadType === "link") {
       try {
         const res = await fetch("/api/addlink", {
           method: "POST",
           headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ name: uploadName.trim(), url: uploadLink.trim() }),
+          body: JSON.stringify({ name: uploadName.trim(), url: uploadLink.trim(), access: uploadAccess }),
         });
         const data = await res.json();
-        if (!res.ok) { setUploadError(data.error || "Failed to save link"); }
+        if (!res.ok) { setUploadError(data.error || "Failed"); }
         else { setUploadSuccess(true); setUploadName(""); setUploadLink(""); fetchFiles(); setTimeout(() => setUploadSuccess(false), 3000); }
       } catch { setUploadError("Failed. Check your connection."); }
-      setUploading(false);
-      return;
+      setUploading(false); return;
     }
 
     const formData = new FormData();
     formData.append("name", uploadName.trim());
     formData.append("file", uploadFile!);
+    formData.append("access", uploadAccess);
     try {
       const res = await fetch("/api/upload", {
         method: "POST",
@@ -172,15 +211,11 @@ export default function Home() {
   const handleAddDev = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!devName.trim() || !devTitle.trim()) { setDevError("Name and title are required."); return; }
-    setDevSaving(true);
-    setDevError("");
-    setDevSuccess(false);
-
+    setDevSaving(true); setDevError(""); setDevSuccess(false);
     const formData = new FormData();
     formData.append("name", devName.trim());
     formData.append("title", devTitle.trim());
     if (devImage) formData.append("image", devImage);
-
     try {
       const res = await fetch("/api/managedev", {
         method: "POST",
@@ -188,29 +223,58 @@ export default function Home() {
         body: formData,
       });
       const data = await res.json();
-      if (!res.ok) { setDevError(data.error || "Failed to add member"); }
+      if (!res.ok) { setDevError(data.error || "Failed"); }
       else {
-        setDevSuccess(true);
-        setDevName(""); setDevTitle(""); setDevImage(null); setDevImagePreview(null);
+        setDevSuccess(true); setDevName(""); setDevTitle(""); setDevImage(null); setDevImagePreview(null);
         if (devImageRef.current) devImageRef.current.value = "";
-        fetchDevs();
-        setTimeout(() => setDevSuccess(false), 3000);
+        fetchDevs(); setTimeout(() => setDevSuccess(false), 3000);
       }
     } catch { setDevError("Failed. Check your connection."); }
     setDevSaving(false);
   };
 
   const handleDeleteDev = async (dev: Dev) => {
-    if (!confirm(`Remove "${dev.name}" from the team?`)) return;
+    if (!confirm(`Remove "${dev.name}"?`)) return;
     try {
-      const formData = new FormData();
-      formData.append("id", dev.id);
       await fetch("/api/managedev", {
         method: "DELETE",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
         body: JSON.stringify({ id: dev.id }),
       });
       fetchDevs();
+    } catch {}
+  };
+
+  const handleAddUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newUsername.trim() || !newPassword.trim()) { setUserError("Username and password required."); return; }
+    setUserSaving(true); setUserError(""); setUserSuccess(false);
+    try {
+      const res = await fetch("/api/manageusers", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ username: newUsername.trim(), password: newPassword.trim(), access: newAccess }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setUserError(data.error || "Failed"); }
+      else {
+        setUserSuccess(true); setNewUsername(""); setNewPassword(""); setNewAccess("basic");
+        if (token) fetchUsers(token);
+        setTimeout(() => setUserSuccess(false), 3000);
+      }
+    } catch { setUserError("Failed. Check your connection."); }
+    setUserSaving(false);
+  };
+
+  const handleDeleteUser = async (user: UserAccount) => {
+    if (!confirm(`Delete account "${user.username}"?`)) return;
+    try {
+      await fetch("/api/manageusers", {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ id: user.id }),
+      });
+      if (token) fetchUsers(token);
     } catch {}
   };
 
@@ -221,9 +285,7 @@ export default function Home() {
       const reader = new FileReader();
       reader.onload = (ev) => setDevImagePreview(ev.target?.result as string);
       reader.readAsDataURL(file);
-    } else {
-      setDevImagePreview(null);
-    }
+    } else { setDevImagePreview(null); }
   };
 
   const formatDate = (iso: string) => new Date(iso).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
@@ -237,9 +299,12 @@ export default function Home() {
     if (["pdf"].includes(ext||"")) return "📄";
     if (["zip","rar","tar","gz"].includes(ext||"")) return "📦";
     if (["doc","docx"].includes(ext||"")) return "📝";
-    if (["xls","xlsx"].includes(ext||"")) return "📊";
-    if (["ppt","pptx"].includes(ext||"")) return "📋";
     return "📁";
+  };
+  const accessBadge = (access: string) => {
+    if (access === "premium") return <span className="badge badge-premium">Premium</span>;
+    if (access === "basic") return <span className="badge badge-basic">Basic</span>;
+    return <span className="badge badge-both">All</span>;
   };
 
   return (
@@ -260,9 +325,14 @@ export default function Home() {
             <nav className="nav">
               <button className={`nav-btn ${tab === "files" ? "active" : ""}`} onClick={() => setTab("files")}>Files</button>
               <button className={`nav-btn ${tab === "devs" ? "active" : ""}`} onClick={() => setTab("devs")}>Team</button>
-              {token ? (
+              {userRole === "admin" ? (
                 <>
-                  <button className={`nav-btn ${tab === "admin" ? "active" : ""}`} onClick={() => setTab("admin")}>Upload</button>
+                  <button className={`nav-btn ${tab === "admin" ? "active" : ""}`} onClick={() => { setTab("admin"); if(token) fetchUsers(token); }}>Admin</button>
+                  <button className="nav-btn logout-btn" onClick={handleLogout}>Sign Out</button>
+                </>
+              ) : token ? (
+                <>
+                  <span className="role-badge">{userRole === "premium" ? "⭐ Premium" : "Basic"}</span>
                   <button className="nav-btn logout-btn" onClick={handleLogout}>Sign Out</button>
                 </>
               ) : (
@@ -274,6 +344,7 @@ export default function Home() {
 
         <main className="main">
 
+          {/* FILES TAB */}
           {tab === "files" && (
             <div className="tab-content">
               <div className="tab-header">
@@ -282,6 +353,13 @@ export default function Home() {
               </div>
               {filesLoading ? (
                 <div className="loading"><div className="loading-bar" /><p>Loading...</p></div>
+              ) : filesLocked ? (
+                <div className="locked-screen">
+                  <div className="lock-icon">🔒</div>
+                  <h2 className="lock-title">Members Only</h2>
+                  <p className="lock-text">You need an account to access files.</p>
+                  <button className="submit-btn" onClick={() => setTab("login")} style={{ marginTop: "8px" }}>Login</button>
+                </div>
               ) : files.length === 0 ? (
                 <div className="empty"><span className="empty-icon">◻</span><p>No files published yet.</p></div>
               ) : (
@@ -293,6 +371,7 @@ export default function Home() {
                         <span className="file-name">{file.name}</span>
                         <span className="file-meta">{isLink(file.filename) ? file.url : file.filename} · {formatDate(file.uploadedAt)}</span>
                       </div>
+                      {accessBadge(file.access || "both")}
                       <span className="file-arrow">↗</span>
                     </a>
                   ))}
@@ -301,6 +380,7 @@ export default function Home() {
             </div>
           )}
 
+          {/* TEAM TAB */}
           {tab === "devs" && (
             <div className="tab-content">
               <div className="tab-header">
@@ -316,11 +396,7 @@ export default function Home() {
                   {devs.map((dev) => (
                     <div key={dev.id} className="dev-card">
                       <div className="dev-avatar">
-                        {dev.image ? (
-                          <img src={dev.image} alt={dev.name} className="dev-img" />
-                        ) : (
-                          <span className="dev-initial">{dev.name.charAt(0).toUpperCase()}</span>
-                        )}
+                        {dev.image ? <img src={dev.image} alt={dev.name} className="dev-img" /> : <span className="dev-initial">{dev.name.charAt(0).toUpperCase()}</span>}
                       </div>
                       <div className="dev-info">
                         <span className="dev-name">{dev.name}</span>
@@ -333,12 +409,13 @@ export default function Home() {
             </div>
           )}
 
+          {/* LOGIN TAB */}
           {tab === "login" && !token && (
             <div className="tab-content center">
               <div className="login-box">
                 <div className="login-header">
                   <span className="login-mark">▲</span>
-                  <h2>Admin Access</h2>
+                  <h2>Sign In</h2>
                 </div>
                 <form onSubmit={handleLogin} className="login-form">
                   <div className="field">
@@ -356,19 +433,29 @@ export default function Home() {
             </div>
           )}
 
-          {tab === "admin" && token && (
+          {/* ADMIN TAB */}
+          {tab === "admin" && userRole === "admin" && (
             <div className="tab-content">
               <div className="tab-header">
                 <h1 className="tab-title">Admin</h1>
-                <p className="tab-subtitle">Signed in as <strong>{adminUser}</strong></p>
+                <p className="tab-subtitle">Signed in as <strong>{loggedInUser}</strong></p>
               </div>
 
+              {/* PUBLISH */}
               <h2 className="section-title">Publish File or Link</h2>
               <div className="upload-box">
                 <form onSubmit={handleUpload} className="upload-form">
                   <div className="field">
                     <label>Display Name</label>
                     <input type="text" value={uploadName} onChange={(e) => setUploadName(e.target.value)} placeholder="Name shown to users" />
+                  </div>
+                  <div className="field">
+                    <label>Access Level</label>
+                    <div className="toggle-row">
+                      <button type="button" className={`toggle-btn ${uploadAccess === "both" ? "active" : ""}`} onClick={() => setUploadAccess("both")}>All</button>
+                      <button type="button" className={`toggle-btn ${uploadAccess === "basic" ? "active" : ""}`} onClick={() => setUploadAccess("basic")}>Basic</button>
+                      <button type="button" className={`toggle-btn ${uploadAccess === "premium" ? "active" : ""}`} onClick={() => setUploadAccess("premium")}>Premium</button>
+                    </div>
                   </div>
                   <div className="field">
                     <label>Type</label>
@@ -397,6 +484,32 @@ export default function Home() {
                 </form>
               </div>
 
+              {/* CREATE USER */}
+              <h2 className="section-title">Create User Account</h2>
+              <div className="upload-box">
+                <form onSubmit={handleAddUser} className="upload-form">
+                  <div className="field">
+                    <label>Username</label>
+                    <input type="text" value={newUsername} onChange={(e) => setNewUsername(e.target.value)} placeholder="e.g. john123" />
+                  </div>
+                  <div className="field">
+                    <label>Password</label>
+                    <input type="text" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} placeholder="Set their password" />
+                  </div>
+                  <div className="field">
+                    <label>Access Level</label>
+                    <div className="toggle-row">
+                      <button type="button" className={`toggle-btn ${newAccess === "basic" ? "active" : ""}`} onClick={() => setNewAccess("basic")}>Basic</button>
+                      <button type="button" className={`toggle-btn ${newAccess === "premium" ? "active" : ""}`} onClick={() => setNewAccess("premium")}>Premium</button>
+                    </div>
+                  </div>
+                  {userError && <p className="error-msg">{userError}</p>}
+                  {userSuccess && <p className="success-msg">✓ Account created</p>}
+                  <button type="submit" className="submit-btn" disabled={userSaving}>{userSaving ? "Creating..." : "Create Account"}</button>
+                </form>
+              </div>
+
+              {/* ADD TEAM MEMBER */}
               <h2 className="section-title">Add Team Member</h2>
               <div className="upload-box">
                 <form onSubmit={handleAddDev} className="upload-form">
@@ -411,9 +524,7 @@ export default function Home() {
                   <div className="field">
                     <label>Profile Photo <span className="label-optional">(optional)</span></label>
                     <div className="avatar-upload-row">
-                      {devImagePreview && (
-                        <img src={devImagePreview} alt="Preview" className="avatar-preview" />
-                      )}
+                      {devImagePreview && <img src={devImagePreview} alt="Preview" className="avatar-preview" />}
                       <div className="drop-area" onClick={() => devImageRef.current?.click()} style={{ flex: 1 }}>
                         {devImage ? <span className="drop-filename">📎 {devImage.name}</span> : <span className="drop-hint">Click to upload photo</span>}
                         <input ref={devImageRef} type="file" accept="image/*" style={{ display: "none" }} onChange={handleDevImageChange} />
@@ -426,6 +537,7 @@ export default function Home() {
                 </form>
               </div>
 
+              {/* MANAGE FILES */}
               <h2 className="section-title">Published Files</h2>
               {files.length === 0 ? <p className="muted">No files yet.</p> : (
                 <div className="manage-list">
@@ -436,6 +548,7 @@ export default function Home() {
                         <span className="file-name">{file.name}</span>
                         <span className="file-meta">{isLink(file.filename) ? file.url : file.filename} · {formatDate(file.uploadedAt)}</span>
                       </div>
+                      {accessBadge(file.access || "both")}
                       <div className="manage-actions">
                         <a href={file.url} target="_blank" rel="noopener noreferrer" className="action-link">View</a>
                         <button className="action-delete" onClick={() => handleDelete(file)}>Delete</button>
@@ -445,6 +558,27 @@ export default function Home() {
                 </div>
               )}
 
+              {/* MANAGE USERS */}
+              <h2 className="section-title">User Accounts</h2>
+              {users.length === 0 ? <p className="muted">No user accounts yet.</p> : (
+                <div className="manage-list">
+                  {users.map((u) => (
+                    <div key={u.id} className="manage-row">
+                      <span className="manage-icon">👤</span>
+                      <div className="manage-info">
+                        <span className="file-name">{u.username}</span>
+                        <span className="file-meta">Created {formatDate(u.createdAt)}</span>
+                      </div>
+                      {u.access === "premium" ? <span className="badge badge-premium">Premium</span> : <span className="badge badge-basic">Basic</span>}
+                      <div className="manage-actions">
+                        <button className="action-delete" onClick={() => handleDeleteUser(u)}>Delete</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* MANAGE TEAM */}
               <h2 className="section-title">Team Members</h2>
               {devs.length === 0 ? <p className="muted">No team members yet.</p> : (
                 <div className="manage-list">
@@ -469,9 +603,7 @@ export default function Home() {
         </main>
 
         <footer className="footer">
-          <span>REPUBLIC</span>
-          <span className="footer-sep">·</span>
-          <span>{new Date().getFullYear()}</span>
+          <span>REPUBLIC</span><span className="footer-sep">·</span><span>{new Date().getFullYear()}</span>
         </footer>
       </div>
 
@@ -487,6 +619,7 @@ export default function Home() {
         .nav-btn:hover { color: var(--text); background: var(--surface2); }
         .nav-btn.active { color: var(--accent); background: var(--surface2); }
         .logout-btn { border: 1px solid var(--border); }
+        .role-badge { font-size: 12px; color: var(--muted); letter-spacing: 0.5px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 20px; }
         .main { flex: 1; max-width: 900px; margin: 0 auto; width: 100%; padding: 48px 24px; }
         .tab-content { animation: fadeIn 0.3s ease; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
@@ -498,6 +631,10 @@ export default function Home() {
         .loading-bar { width: 200px; height: 2px; background: var(--border); border-radius: 1px; overflow: hidden; position: relative; }
         .loading-bar::after { content: ''; position: absolute; height: 100%; width: 60px; background: var(--accent); animation: slide 1.2s infinite ease-in-out; }
         @keyframes slide { 0% { left: -60px; } 100% { left: 200px; } }
+        .locked-screen { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 100px 20px; text-align: center; gap: 16px; }
+        .lock-icon { font-size: 48px; }
+        .lock-title { font-family: 'Bebas Neue', sans-serif; font-size: 36px; letter-spacing: 2px; color: var(--text); }
+        .lock-text { color: var(--muted); font-size: 15px; }
         .empty { text-align: center; padding: 80px 0; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 12px; }
         .empty-icon { font-size: 32px; opacity: 0.3; }
         .files-grid { display: flex; flex-direction: column; gap: 2px; }
@@ -508,6 +645,10 @@ export default function Home() {
         .file-name { font-size: 15px; font-weight: 500; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .file-meta { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .file-arrow { color: var(--accent); font-size: 18px; flex-shrink: 0; }
+        .badge { font-size: 10px; letter-spacing: 1px; text-transform: uppercase; padding: 3px 8px; border-radius: 20px; flex-shrink: 0; font-weight: 500; }
+        .badge-premium { background: rgba(255,200,0,0.15); color: #f0c040; border: 1px solid rgba(255,200,0,0.3); }
+        .badge-basic { background: rgba(100,180,255,0.15); color: #6ab4ff; border: 1px solid rgba(100,180,255,0.3); }
+        .badge-both { background: rgba(150,150,150,0.15); color: var(--muted); border: 1px solid var(--border); }
         .devs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 16px; }
         .dev-card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 28px 20px; display: flex; flex-direction: column; align-items: center; gap: 14px; text-align: center; transition: border-color 0.2s, background 0.2s; }
         .dev-card:hover { border-color: var(--accent); background: var(--surface2); }
@@ -534,7 +675,7 @@ export default function Home() {
         .field input { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text); padding: 12px 14px; font-size: 14px; transition: border-color 0.2s; outline: none; }
         .field input:focus { border-color: var(--accent); }
         .field input::placeholder { color: var(--muted); }
-        .toggle-row { display: flex; gap: 8px; }
+        .toggle-row { display: flex; gap: 8px; flex-wrap: wrap; }
         .toggle-btn { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--muted); padding: 8px 20px; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; transition: all 0.2s; cursor: pointer; font-family: inherit; }
         .toggle-btn.active { border-color: var(--accent); color: var(--accent); }
         .toggle-btn:hover { color: var(--text); }
@@ -550,7 +691,7 @@ export default function Home() {
         .upload-box { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 32px; max-width: 560px; margin-bottom: 48px; }
         .upload-form { display: flex; flex-direction: column; gap: 20px; }
         .manage-list { display: flex; flex-direction: column; gap: 2px; margin-bottom: 40px; }
-        .manage-row { display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; }
+        .manage-row { display: flex; align-items: center; gap: 14px; padding: 14px 18px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; flex-wrap: wrap; }
         .manage-icon { font-size: 18px; flex-shrink: 0; }
         .manage-info { flex: 1; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
         .manage-actions { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
@@ -561,7 +702,7 @@ export default function Home() {
         .muted { color: var(--muted); font-size: 14px; margin-bottom: 40px; }
         .footer { border-top: 1px solid var(--border); padding: 20px 24px; display: flex; align-items: center; gap: 12px; justify-content: center; font-size: 11px; letter-spacing: 2px; text-transform: uppercase; color: var(--border); }
         .footer-sep { color: var(--border); }
-        @media (max-width: 600px) { .tab-title { font-size: 36px; } .manage-row { flex-wrap: wrap; } .login-box { padding: 24px; } .devs-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
+        @media (max-width: 600px) { .tab-title { font-size: 36px; } .login-box { padding: 24px; } .devs-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } }
       `}</style>
     </>
   );
