@@ -110,7 +110,7 @@ export default function Home() {
 
   useEffect(() => {
   const t = localStorage.getItem("republic_token");
-  fetchFiles(t);
+  fetchFiles(t ?? undefined);
   fetchDevs();
 }, []);
 
